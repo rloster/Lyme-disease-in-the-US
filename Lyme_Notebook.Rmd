@@ -1,0 +1,390 @@
+---
+title: "POPM*6290 Assignment 1"
+output: html_document
+date: "2023-09-27"
+---
+
+```{r}
+# Retrieve downloaded diphtheria prevalence data 
+# Create yrmonth column
+setwd("C:/Users/rhian/Desktop/F23/POPM 6290/Term project")
+lyme_data <- read.csv("Lyme_Disease_Cases_by_Month_of_Disease_Onset_United_States.csv")
+lyme_data$month <- as.integer(factor(lyme_data$Onset.Month, levels = month.name))
+lyme_data$yrmon <- lyme_data$Year + (lyme_data$month-1)/12  
+
+```
+
+
+## Provide some descriptive statistics for the data
+```{r}
+summary(lyme_data$Cases)  
+dim(lyme_data)         
+mean(lyme_data$Cases)    
+median(lyme_data$Cases)	
+var(lyme_data$Cases)     
+
+# Box-plot and histogram to explore distribution of 
+boxplot(log(lyme_data$Cases), col="blue", main="",
+     xlab='Number of Lyme disease cases',
+     ylab='Number of monthly observations')
+boxplot(lyme_data$Cases, col="blue", main="",
+     xlab='Number of Lyme disease cases',
+     ylab='Number of monthly observations') 
+hist(log(lyme_data$Cases), col="lightblue", main="",
+     xlab='Number of Lyme disease cases',
+     ylab='Number of monthly observations')
+hist(lyme_data$Cases, col="lightblue", main="",
+     xlab='Number of Lyme disease cases',
+     ylab='Number of monthly observations')
+# Note: both the boxplot and histogram show that this is not Gaussian data so maybe we should do a log transform
+
+library(lmtest)
+dwtest(lyme_data$Cases ~ yrmon, data=lyme_data)
+#DW closer to zero so there is a positive autocorrelation of some sort and the p-value is low so this can be taken as signficant
+```
+
+## Plotting data 
+```{r}
+plot(lyme_data$yrmon, lyme_data$Cases, type='l', col='dark red',
+     xlab='Date', ylab='Number of Lyme disease cases')
+
+# Explore possible trends and seasonal components with splines
+lyme.spl1 <- smooth.spline(lyme_data$yrmon, lyme_data$Cases, spar=0.25) 
+lyme.spl2 <- smooth.spline(lyme_data$yrmon, lyme_data$Cases, spar=1)
+lines(lyme.spl1, col = "blue", lwd=2)
+lines(lyme.spl2, col = "red", lwd=2)
+#could just mention that a limitation of this study was the lack of data monthly for a specific region or state in the US that could have possibly shown more specific trend for that region (find reference that mentions the increase in lyme disease in northern states due to climate change which would be an increasing trend)
+
+plot(lyme_data$yrmon, log(lyme_data$Cases), type='l', col='dark red',
+     xlab='Date', ylab='Number of Lyme disease cases')
+
+# Explore possible trends and seasonal components with splines
+lyme.spl1 <- smooth.spline(lyme_data$yrmon, log(lyme_data$Cases), spar=0.25) 
+lyme.spl2 <- smooth.spline(lyme_data$yrmon, log(lyme_data$Cases), spar=1)
+lines(lyme.spl1, col = "blue", lwd=2)
+lines(lyme.spl2, col = "red", lwd=2)
+
+```
+
+## Perform a STL analysis
+```{r}
+# Now make time series objects
+lyme.ts <- ts(lyme_data$Cases, frequency = 12, start = c(2008, 1))
+lyme.lts <- ts(log(lyme_data$Cases), frequency = 12, start = c(2008,1))
+# This is monthly data so frequency is 12 per year and it starts on the 1st month of 2008
+
+lyme.stll <- stl(lyme.lts, s.window=13, t.window=168, robust=T)
+
+lyme.stl <- stl(lyme.ts, s.window=7, t.window=168, robust=T) #tried 13 to begin with but it gave an acf with lag 1 out of the interval showing that something had to be changed
+# The exploratory earlier seemed to show seasonal every year (12 months), so s.window was put add next odd number 
+# Since the data has 168 observations, the t.window should not be more than that 
+# I would rather check different values of s.window and t.window myself so I did not use the auto.stl function
+plot(lyme.stl)
+plot(lyme.stll)
+# The remainder looks random so the values chosen should be alright
+
+plot(lyme.ts, xlab='Date', ylab='Lyme disease cases')
+lyme.signal <- (lyme.stl$time.series[,"trend"] 
+               + lyme.stl$time.series[,"seasonal"])  
+lines(lyme.signal, col="blue", lwd=2)
+lines(lyme.stl$time.series[,"trend"], col="red", lwd=2)
+
+plot(lyme.lts, xlab='Date', ylab='Lyme disease cases')
+lyme.signal <- (lyme.stll$time.series[,"trend"] 
+               + lyme.stll$time.series[,"seasonal"])  
+lines(lyme.signal, col="blue", lwd=2)
+lines(lyme.stll$time.series[,"trend"], col="red", lwd=2)
+
+
+# Check autocorrelation of remainder to see if we need to adjust values (personal check)
+lyme.acf <- acf(lyme.stl$time.series[, "remainder"], type="correlation", main="")
+lyme.acfl <- acf(lyme.stll$time.series[, "remainder"], type="correlation", main="")
+
+
+# With this analysis we are going to try trend component, d = 0, and seasonal component, D = 1 for SARIMA model
+
+```
+
+## Fit SARIMA model, plot ACF and PACF, inspect QQ-plot, Ljung-Box test
+```{r}
+library(forecast)
+sarima.fit <- auto.arima(lyme.ts, d=0, D=1)
+sarima.fitl <- auto.arima(lyme.lts, d=0, D=1, approximation=TRUE, lambda=0)
+summary(sarima.fit)
+summary(sarima.fitl)
+
+# ACF and PACF
+acf(sarima.fit$residuals, lag.max=168, main ="")    
+pacf(sarima.fit$residuals, lag.max=168, main ="")
+acf(sarima.fitl$residuals, lag.max=168, main ="")    
+pacf(sarima.fitl$residuals, lag.max=168, main ="")
+# Neither of these are indicating lack of fit so I would say that the orders of p, q and P, Q are correct
+
+# QQ-plot
+car::qqPlot(sarima.fitl$residuals)
+car::qqPlot(sarima.fit$residuals) 
+# In the QQ-plot there is a spot in the middle where it varies from the line, this to me indicates some lack-of-fit. This seems like it may be caused by the data not being gaussian (normally distributed). The QQ-plot staying around a midline and then having more further away points on the ends suggests a Cauchy distribution. I would suggest converting these values to a normal distribution and then fitting a model to that data. It also might be useful to find a covariate such as temperature (as mentioned in the paper and seen in the data there seems to be a seasonal trend where there is an increase in cases in the winter).
+
+#Ljung-Box test
+Box.test(sarima.fitl$residuals, lag= 24, type="Ljung-Box")
+# Used lag = 24 for Ljung-Box test as it is 2 times the cycle length (cycle length = 12)
+# This gave a p-value of 0.4537 so as this is high enough ("non-significant") this shows a decent fit for the model
+
+#This gives the ACF as well as the p-values for the Ljung-Box test at a variety of lag 
+tsdiag(sarima.fitl)
+```
+
+## Forecasting 12 months ahead
+```{r}
+lyme.forecast <- forecast(sarima.fitl, h=36, level=95)
+plot(lyme.forecast, 
+     shadecols="lightblue", 
+     main="", 
+     xlab="date", ylab="Number of Lyme disease cases")
+```
+```{r}
+# Investigating values of forecast, as well as confidence interval
+lyme.forecast$mean
+lyme.forecast$upper
+lyme.forecast$lower
+```
+
+```{r}
+#Investigating temperature covariate
+temp <- read.csv("data(1).csv")
+temp$month <- as.integer(factor(temp$Month, levels = month.name))
+temp$yrmon <- temp$Year + (temp$month-1)/12
+
+lyme_data$temp <- temp$Value[1:168]
+lyme_data$celsius <- (lyme_data$temp - 32)/1.8
+summary(lyme_data$celsius)
+range(lyme_data$celsius)
+var(lyme_data$celsius)
+plot(lyme_data$celsius, lyme_data$Cases, main="", ylab = "Temperature (degrees Celsius)", xlab = "Lyme disease cases")#possible relationship present
+spl1 <- smooth.spline(lyme_data$celsius, lyme_data$Cases, spar = 1)
+lines(spl1, lwd=2, col="purple")
+cor.test(lyme_data$celsius, lyme_data$Cases)
+# this is spearman method and cor = 0.7436775  95% CL =  0.6674191 - 0.8045005, pvalue of 2.2e-16 so significant
+# indicates a positive correlation between temperature and lyme disease cases
+
+# visualize
+temp.ts <- ts(lyme_data$celsius, frequency = 12, start = c(2008, 1))
+par(mar=c(5,4,4,5)+.1)
+plot(temp.ts, col="blue",ylab="Temperature (degrees Celsius)") 
+par(new=TRUE)
+plot(lyme.lts,xaxt="n",yaxt="n",xlab="",ylab="")
+axis(4)
+mtext("Lyme disease cases",side=4, line=3)
+legend("topleft",col=c("blue","black"),lty=1,legend=c("Celsius","Lyme"))
+
+# fit a first regression model with ARMA residuals
+fit.temp1 <- auto.arima(lyme.ts, xreg=lyme_data$celsius, approximation=FALSE)
+summary(fit.temp1)	
+#this is different from the others because it adds the affect that the temperature has on it 
+tsdiag(fit.temp1)
+#qq plot will tell us if the residuals are gaussian which is important and if it is a linear relation
+
+fit.temp2 <- auto.arima(lyme.lts, xreg=lyme_data$celsius, lambda = 0, approximation = FALSE)
+summary(fit.temp2)
+tsdiag(fit.temp2)
+library(car)
+qqPlot(fit.temp2$residuals/sqrt(fit.temp2$sigma2)) 
+
+cwp <- function (object){
+  #
+  # cwp <--> "coefficients with p-values"
+  # by Rolf Turner, Jun 22, 2009
+  #
+  coef <- coef(object)
+  if (length(coef) > 0) {
+    mask <- object$mask
+    sdev <- sqrt(diag(vcov(object)))
+    t.rat <- rep(NA, length(mask))
+    t.rat[mask] <- coef[mask]/sdev
+    pt <- 2 * pnorm(-abs(t.rat))
+    setmp <- rep(NA, length(mask))
+    setmp[mask] <- sdev
+    sum <- rbind(coef, setmp, t.rat, pt)
+    dimnames(sum) <- list(c("coef", "s.e.", "t ratio", "p-value"),
+                          names(coef))
+    return(sum)
+  } else return(NA)
+}
+
+cwp(fit.temp2) 
+#                    xreg
+# coef        0.0027869352 #but this is in log cases so exp(0.0027869352) for actual cases
+# p-value     0.0032553908
+exp(0.0027869352)
+# What does this mean?
+# 
+# for each increase in 1 degree of temperature,
+# the lyme disease cases increase by about 1 case
+
+
+```
+
+
+```{r}
+state_lyme_data <- read.csv("Lyme_Disease_Cases_by_State_or_Locality.csv")
+for(j in 2:ncol(state_lyme_data)){
+  state_lyme_data[,j] <- as.numeric(gsub(",","", state_lyme_data[,j]))
+}
+
+state_stat = data.frame(matrix(nrow = length(state_lyme_data$State), ncol = 7))
+colnames(state_stat) = c("State", "Mean", "Median", "Variance", "Total", "Min", "Max")
+
+for(i in 1:length(state_lyme_data$State)){
+  state_stat[i,1] <- state_lyme_data[i,1]
+  state_stat[i,2] <- mean(as.numeric(state_lyme_data[i,2:ncol(state_lyme_data)]))
+  state_stat[i,3] <- median(as.numeric(state_lyme_data[i,2:ncol(state_lyme_data)]))
+  state_stat[i,4] <- var(as.numeric(state_lyme_data[i,2:ncol(state_lyme_data)]))
+  state_stat[i,5] <- sum(as.numeric(state_lyme_data[i,2:ncol(state_lyme_data)]))
+  state_stat[i,6:7] <- range(as.numeric(state_lyme_data[i,2:ncol(state_lyme_data)]))
+}
+
+```
+
+
+```{r}
+
+columns <- c("Year", "Alabama", "Alaska" ,"Arizona", "Arkansas", "California", "Colorado","Connecticut" ,"Delaware" ,"District of Columbia","Florida","Georgia","Hawaii" ,"Idaho" ,"Illinois" , "Indiana" , "Iowa" , "Kansas" ,"Kentucky" ,"Louisiana"  ,"Maine", "Maryland"  ,"Massachusetts", "Michigan",  "Minnesota", "Mississippi","Missouri","Montana" , "Nebraska" ,"Nevada","New Hampshire" ,"New Jersey" , "New Mexico" ,"New York" ,"North Carolina", "North Dakota", "Ohio" ,"Oklahoma"  , "Oregon" ,"Pennsylvania","Rhode Island"  ,"South Carolina","South Dakota" , "Tennessee" , "Texas" , "Utah","Vermont","Virginia" , "Washington" ,"West Virginia" ,"Wisconsin", "Wyoming","U.S. Total")
+by_state <- data.frame(matrix(nrow = length(c(2008:2021)), ncol = length(columns)))
+colnames(by_state) = columns
+by_state[,1] <- c(2008:2021)
+
+for(i in 1:52){
+  for(j in 1:length(by_state[,1])){
+    by_state[j,i+1] <- state_lyme_data[i,j+1]
+  }
+}
+
+for(i in 1:52){
+  plot(by_state[,1], by_state[,i+1], type ="l", col = 1, main=columns[i+1], xlab="Year", ylab="Number of Lyme disease cases")
+  lines(smooth.spline(by_state[,1], by_state[,i+1], spar=0.75),col = "red", lwd=2)
+}
+
+state_regression <- data.frame(matrix(nrow = length(state_lyme_data$State), ncol = 4))
+colnames(state_regression) = c( "State","Intercept", "Slope", "Trend")
+state_regression$State = columns[2:53]
+
+state_forecast <- data.frame(matrix(nrow = length(state_lyme_data$State), ncol = 4))
+colnames(state_forecast) = c("State", "Forecast", "CI_low", "CI_upper")
+state_forecast$State = columns[2:53]
+
+
+for(i in 1:52){
+  regression <- lm(by_state[,i+1] ~by_state[,1])$coeff
+  state_regression[i,2] <- regression[1]
+  state_regression[i,3] <- regression[2]
+  plot(by_state[,1], by_state[,i+1], type="l", col =1, main = columns[i+1])
+  abline(regression, col="blue")
+  ts.region <- ts(by_state[,i+1], frequency = 1, start = c(2008))
+  tslm.region <- tslm(ts.region~ trend)
+  forecast <- forecast(tslm.region, h=3)
+  plot(forecast, main = columns[i+1])
+  state_forecast[i,2] <- forecast$mean[3]
+  state_forecast[i,3] <- forecast$lower[6]
+  state_forecast[i,4] <- forecast$upper[6]
+}
+
+for(i in 1:52){
+  if(state_regression[i,3] > 0){
+    state_regression[i,4] = "positive"
+  } else if(state_regression[i,3] < 0){
+    state_regression[i,4] = "negative"
+  } else{
+    state_regression[i,4] = "none"
+  }
+}
+
+
+positive_trend <- subset(state_regression, state_regression$Trend == "positive")
+positive_trend <- positive_trend[order(positive_trend$Slope),] 
+# these are the states with an increasing trend in Lyme disease (order to find highest) in 13 years
+negative_trend <- subset(state_regression, state_regression$Trend == "negative")
+negative_trend <- negative_trend[order(negative_trend$Slope),]
+# these are the states with a decreasing trend in Lyme disease in 13 years
+no_trend <- subset(state_regression, state_regression$Trend == "none")
+# only one state has no change in trend
+
+mean(positive_trend$Slope)
+range(positive_trend$Slope)
+mean(negative_trend[2:20,3])
+range(negative_trend[2:20,3])
+```
+
+```{r}
+# do similar regression but only over the last 5 years
+state_regression_lastfive <- data.frame(matrix(nrow = length(state_lyme_data$State), ncol = 4))
+colnames(state_regression_lastfive) = c( "State","Intercept", "Slope", "Trend")
+state_regression_lastfive$State = columns[2:53]
+
+state_forecast_lastfive <- data.frame(matrix(nrow = length(state_lyme_data$State), ncol = 4))
+colnames(state_forecast_lastfive) = c("State", "Forecast", "CI_low", "CI_upper")
+state_forecast_lastfive$State = columns[2:53]
+
+for(i in 1:52){
+  regression_lastfive <- lm(by_state[10:14,i+1] ~by_state[10:14,1])$coeff
+  state_regression_lastfive[i,2] <- regression_lastfive[1]
+  state_regression_lastfive[i,3] <- regression_lastfive[2]
+  plot(by_state[,1], by_state[,i+1], type="l", col =1, main = columns[i+1])
+  abline(regression_lastfive, col="blue")
+  ts.region <- ts(by_state[10:14,i+1], frequency = 1, start = c(2008))
+  tslm.region <- tslm(ts.region~ trend)
+  forecast <- forecast(tslm.region, h=3)
+  plot(forecast, main = columns[i+1])
+  state_forecast_lastfive[i,2] <- forecast$mean[3]
+  state_forecast_lastfive[i,3] <- forecast$lower[6]
+  state_forecast_lastfive[i,4] <- forecast$upper[6]
+}
+
+for(i in 1:52){
+  regression <- lm(by_state[,i+1] ~by_state[,1])$coeff
+  state_regression[i,2] <- regression[1]
+  state_regression[i,3] <- regression[2]
+  plot(by_state[,1], by_state[,i+1], type="l", col =1, main = columns[i+1])
+  abline(regression, col="blue")
+  ts.region <- ts(by_state[,i+1], frequency = 1, start = c(2008))
+  tslm.region <- tslm(ts.region~ trend)
+  forecast <- forecast(tslm.region, h=3)
+  plot(forecast, main = columns[i+1])
+  state_forecast[i,2] <- forecast$mean[3]
+  state_forecast[i,3] <- forecast$lower[6]
+  state_forecast[i,4] <- forecast$upper[6]
+}
+
+for(i in 1:52){
+  if(state_regression_lastfive[i,3] > 0){
+    state_regression_lastfive[i,4] = "positive"
+  } else if(state_regression_lastfive[i,3] < 0){
+    state_regression_lastfive[i,4] = "negative"
+  } else{
+    state_regression_lastfive[i,4] = "none"
+  }
+}
+
+positive_trend_lastfive <- subset(state_regression_lastfive, state_regression_lastfive$Trend == "positive")
+positive_trend_lastfive <- positive_trend_lastfive[order(positive_trend_lastfive$Slope),] 
+# these are the states with an increasing trend in Lyme disease (order to find highest) in 5 years
+negative_trend_lastfive <- subset(state_regression_lastfive, state_regression_lastfive$Trend == "negative")
+negative_trend_lastfive <- negative_trend_lastfive[order(negative_trend_lastfive$Slope),]
+# these are the states with a decreasing trend in Lyme disease in 5 years
+no_trend_lastfive <- subset(state_regression_lastfive, state_regression_lastfive$Trend == "none")
+# only one state has no change in trend still
+mean(positive_trend_lastfive$Slope)
+range(positive_trend_lastfive$Slope)
+mean(negative_trend_lastfive[2:36, 3])
+range(negative_trend_lastfive[2:36, 3])
+```
+
+```{r}
+range(state_forecast_lastfive[1:51,2])
+```
+
+
+
+```{r}
+citation("forecast")
+```
+
